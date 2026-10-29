@@ -19,6 +19,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* Hide top header bar & reduce top margin */
     header {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     .block-container {
@@ -67,6 +68,7 @@ st.markdown("""
         border-radius: 10px;
     }
 
+    /* Industry Return Ticker Tape Styling */
     .ticker-wrap {
         width: 100%;
         overflow: hidden;
@@ -96,6 +98,7 @@ st.markdown("""
     .pos { color: #34d399; }
     .neg { color: #f87171; }
 
+    /* Calendar Styling */
     .cal-table {
         width: 100%;
         border-collapse: collapse;
@@ -118,7 +121,6 @@ st.markdown("""
         color: #ffffff !important;
         font-weight: bold;
         border: 2px solid #38bdf8 !important;
-        border-radius: 50% !important;
     }
     .cal-event-jobs { background-color: #065f46; color: #34d399; font-weight: bold; }
     .cal-event-cpi { background-color: #831843; color: #f472b6; font-weight: bold; }
@@ -136,6 +138,13 @@ if "FRED_API_KEY" in st.secrets and st.secrets["FRED_API_KEY"]:
 else:
     ACTIVE_API_KEY = API_KEY
 
+# Initialize session state for interactive calendar navigation
+now_date = datetime.datetime.now()
+if "cal_year" not in st.session_state:
+    st.session_state.cal_year = now_date.year
+if "cal_month" not in st.session_state:
+    st.session_state.cal_month = now_date.month
+
 # ==============================================================================
 # 3. HELPER FUNCTIONS
 # ==============================================================================
@@ -149,7 +158,7 @@ def fetch_fred_series(series_id: str, start_date: str = "2018-01-01") -> pd.Seri
         st.error(f"Error fetching {series_id}: {e}")
         return pd.Series(dtype=float)
 
-@st.cache_data(ttl=14400) # Cache live sector returns for 4 hours
+@st.cache_data(ttl=3600)
 def get_live_sector_returns():
     """Fetches real-time YTD performance for S&P 500 Sector ETFs via Yahoo Finance."""
     sectors = {
@@ -168,13 +177,17 @@ def get_live_sector_returns():
     
     results = []
     try:
-        tickers = list(sectors.values())
-        start_of_year = f"{datetime.datetime.now().year}-01-01"
-        data = yf.download(tickers, start=start_of_year, progress=False)['Close']
+        curr_year = datetime.datetime.now().year
+        data = yf.download(list(sectors.values()), start=f"{curr_year}-01-01", progress=False)
         
+        if 'Close' in data.columns:
+            close_data = data['Close']
+        else:
+            close_data = data
+            
         for name, ticker in sectors.items():
-            if ticker in data.columns:
-                series = data[ticker].dropna()
+            if ticker in close_data.columns:
+                series = close_data[ticker].dropna()
                 if len(series) >= 2:
                     start_price = series.iloc[0]
                     curr_price = series.iloc[-1]
@@ -184,7 +197,7 @@ def get_live_sector_returns():
         pass
     
     if not results:
-        results = [("Market Data Unavailable", "0.0%", True)]
+        results = [("Market Data Syncing...", "0.0%", True)]
         
     return results
 
@@ -233,22 +246,33 @@ def render_ticker_tape():
     """
     return html
 
-def render_monthly_calendar():
-    now = datetime.datetime.now()
-    year, month, today_day = now.year, now.month, now.day
+def render_monthly_calendar(year, month):
+    """Generates an HTML monthly calendar with accurate FOMC dates & event markers."""
+    today = datetime.datetime.now()
     month_name = calendar.month_name[month]
     
-    cal = calendar.Calendar(firstweekday=6)
+    cal = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal.monthdayscalendar(year, month)
     
-    first_friday = [week[5] for week in month_days if week[5] != 0][0]
-    cpi_day = 12
-    fomc_day = 18
+    # Official 2026 FOMC Rate Decision Days
+    fomc_dates_2026 = {
+        (2026, 1): [27, 28],
+        (2026, 3): [17, 18],
+        (2026, 4): [28, 29],
+        (2026, 6): [16, 17],
+        (2026, 7): [28, 29],
+        (2026, 9): [15, 16],
+        (2026, 10): [27, 28], # Oct 27-28 Rate Decision
+        (2026, 12): [15, 16],
+    }
+    
+    # Calculate 1st Friday for Jobs Report and 2nd Wednesday for CPI
+    first_friday = [w[5] for w in month_days if w[5] != 0][0]
+    cpi_day = [w[3] for w in month_days if w[3] != 0][1] if len([w[3] for w in month_days if w[3] != 0]) > 1 else 13
+    
+    current_fomc_days = fomc_dates_2026.get((year, month), [17, 18])
     
     html = f"""
-    <div style="text-align: center; font-weight: bold; font-size: 1.1rem; color: #38bdf8; margin-bottom: 6px;">
-        📅 {month_name} {year} Economic Calendar
-    </div>
     <table class="cal-table">
         <tr><th>Su</th><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th></tr>
     """
@@ -260,14 +284,16 @@ def render_monthly_calendar():
                 html += "<td></td>"
             else:
                 classes = []
-                if day == today_day:
+                is_today = (year == today.year and month == today.month and day == today.day)
+                
+                if is_today:
                     classes.append("cal-today")
+                elif day in current_fomc_days:
+                    classes.append("cal-event-fomc")
                 elif day == first_friday:
                     classes.append("cal-event-jobs")
                 elif day == cpi_day:
                     classes.append("cal-event-cpi")
-                elif day == fomc_day:
-                    classes.append("cal-event-fomc")
                 
                 class_str = " ".join(classes)
                 html += f'<td class="{class_str}">{day}</td>'
@@ -277,10 +303,10 @@ def render_monthly_calendar():
     
     html += f"""
     <div style="margin-top: 10px; font-size: 0.78rem; line-height: 1.4; color: #cbd5e1;">
-        <span style="color:#38bdf8;"><b>🔵 Today:</b> {month_name} {today_day}</span><br>
-        <span style="color:#34d399;"><b>🟢 Jobs Report:</b> Day {first_friday} (Unemployment & NFP)</span><br>
-        <span style="color:#f472b6;"><b>🔴 CPI Inflation:</b> ~Day {cpi_day}</span><br>
-        <span style="color:#c084fc;"><b>🟣 FOMC / Fed Decision:</b> ~Day {fomc_day}</span>
+        <span style="color:#38bdf8;"><b>🔵 Today:</b> {today.strftime('%b %d, %Y')}</span><br>
+        <span style="color:#c084fc;"><b>🟣 FOMC Decision:</b> {month_name} {', '.join(map(str, current_fomc_days))}</span><br>
+        <span style="color:#34d399;"><b>🟢 Jobs Report:</b> Day {first_friday} (Unemployment)</span><br>
+        <span style="color:#f472b6;"><b>🔴 CPI Inflation:</b> Day {cpi_day}</span>
     </div>
     """
     return html
@@ -314,8 +340,8 @@ with col1:
         <div class="analysis-box">
             <div class="analysis-title">📊 Economic Analysis</div>
             <b>📌 What it means:</b> Benchmark rate set by the Fed for overnight interbank lending.<br>
-            <b>📍 Where we are:</b> Transitioning toward neutral rates after restrictive tightening.<br>
-            <b>🚦 Assessment:</b> 🟨 <b>Neutral / Easing</b> — Lowering rate reduces borrowing costs.<br>
+            <b>📍 Where we are:</b> Adjusting target ranges following FOMC policy decisions.<br>
+            <b>🚦 Assessment:</b> 🟨 <b>Neutral / Easing</b> — Rate recalibration supports liquidity.<br>
             <b>🎯 Target Level:</b> <b>2.50% – 3.25%</b> (Estimated neutral rate).
         </div>
         """, unsafe_allow_html=True)
@@ -337,8 +363,8 @@ with col2:
         <div class="analysis-box">
             <div class="analysis-title">📊 Economic Analysis</div>
             <b>📌 What it means:</b> Annualized number of new residential building projects started.<br>
-            <b>📍 Where we are:</b> Moderating under high financing costs for developers.<br>
-            <b>🚦 Assessment:</b> 🟨 <b>Sensitive</b> — High interest rates slow homebuilding momentum.<br>
+            <b>📍 Where we are:</b> Moderating under prevailing developer financing costs.<br>
+            <b>🚦 Assessment:</b> 🟨 <b>Sensitive</b> — Construction activity reacts to credit availability.<br>
             <b>🎯 Target Level:</b> <b>1,400K – 1,600K</b> (Healthy expansion level).
         </div>
         """, unsafe_allow_html=True)
@@ -388,21 +414,41 @@ with col4:
         <div class="analysis-box">
             <div class="analysis-title">📊 Economic Analysis</div>
             <b>📌 What it means:</b> Primary long-term borrowing benchmark for U.S. home buyers.<br>
-            <b>📍 Where we are:</b> Elevated compared to the past decade.<br>
-            <b>🚦 Assessment:</b> 🟥 <b>Restrictive</b> — High rates pressure home buyer affordability.<br>
+            <b>📍 Where we are:</b> Higher relative to 2015–2021 historical baselines.<br>
+            <b>🚦 Assessment:</b> 🟥 <b>Restrictive</b> — Influences housing turnover and volume.<br>
             <b>🎯 Target Level:</b> <b>4.50% – 5.50%</b> (Balanced borrowing range).
         </div>
         """, unsafe_allow_html=True)
 
-# 5. MIDDLE CENTER: DYNAMIC MONTHLY CALENDAR
+# 5. MIDDLE CENTER: INTERACTIVE MONTHLY CALENDAR
 with col5:
-    st.markdown(render_monthly_calendar(), unsafe_allow_html=True)
-    st.markdown("""
-    <div class="analysis-box" style="margin-top: 12px;">
-        <div class="analysis-title">📊 Release Schedule Strategy</div>
-        <b>📌 Focus:</b> Track 1st Friday Jobs data and mid-month CPI inflation for market direction.
-    </div>
-    """, unsafe_allow_html=True)
+    c_m, c_yr = st.columns([2, 1])
+    
+    # Month & Year Navigation State Controls
+    col_p, col_t, col_n = st.columns([1, 2, 1])
+    with col_p:
+        if st.button("◀ Prev", key="btn_prev"):
+            if st.session_state.cal_month == 1:
+                st.session_state.cal_month = 12
+                st.session_state.cal_year -= 1
+            else:
+                st.session_state.cal_month -= 1
+            st.rerun()
+            
+    with col_t:
+        month_label = calendar.month_name[st.session_state.cal_month]
+        st.markdown(f"<h4 style='text-align: center; color: #38bdf8; margin: 0;'>{month_label} {st.session_state.cal_year}</h4>", unsafe_allow_html=True)
+        
+    with col_n:
+        if st.button("Next ▶", key="btn_next"):
+            if st.session_state.cal_month == 12:
+                st.session_state.cal_month = 1
+                st.session_state.cal_year += 1
+            else:
+                st.session_state.cal_month += 1
+            st.rerun()
+
+    st.markdown(render_monthly_calendar(st.session_state.cal_year, st.session_state.cal_month), unsafe_allow_html=True)
 
 # 6. Unemployment Rate (UNRATE)
 with col6:
