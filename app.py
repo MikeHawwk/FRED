@@ -19,7 +19,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Hide top header bar & reduce top margin */
+    /* Hide top header bar & reduce top whitespace */
     header {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     .block-container {
@@ -98,7 +98,7 @@ st.markdown("""
     .pos { color: #34d399; }
     .neg { color: #f87171; }
 
-    /* Calendar Styling */
+    /* Calendar Table Styling */
     .cal-table {
         width: 100%;
         border-collapse: collapse;
@@ -138,7 +138,7 @@ if "FRED_API_KEY" in st.secrets and st.secrets["FRED_API_KEY"]:
 else:
     ACTIVE_API_KEY = API_KEY
 
-# Initialize session state for interactive calendar navigation
+# Calendar State Initialization
 now_date = datetime.datetime.now()
 if "cal_year" not in st.session_state:
     st.session_state.cal_year = now_date.year
@@ -180,10 +180,7 @@ def get_live_sector_returns():
         curr_year = datetime.datetime.now().year
         data = yf.download(list(sectors.values()), start=f"{curr_year}-01-01", progress=False)
         
-        if 'Close' in data.columns:
-            close_data = data['Close']
-        else:
-            close_data = data
+        close_data = data['Close'] if 'Close' in data.columns else data
             
         for name, ticker in sectors.items():
             if ticker in close_data.columns:
@@ -266,10 +263,8 @@ def render_monthly_calendar(year, month):
         (2026, 12): [15, 16],
     }
     
-    # Calculate 1st Friday for Jobs Report and 2nd Wednesday for CPI
     first_friday = [w[5] for w in month_days if w[5] != 0][0]
     cpi_day = [w[3] for w in month_days if w[3] != 0][1] if len([w[3] for w in month_days if w[3] != 0]) > 1 else 13
-    
     current_fomc_days = fomc_dates_2026.get((year, month), [17, 18])
     
     html = f"""
@@ -322,7 +317,7 @@ st.markdown(render_ticker_tape(), unsafe_allow_html=True)
 # 4. DASHBOARD GRID (3x3)
 # ==============================================================================
 
-# --- ROW 1 ---
+# --- ROW 1: FED FUNDS RATE | CPI INFLATION | REAL GDP GROWTH ---
 col1, col2, col3 = st.columns(3)
 
 # 1. Federal Funds Rate (FEDFUNDS)
@@ -346,8 +341,59 @@ with col1:
         </div>
         """, unsafe_allow_html=True)
 
-# 2. Housing Starts (HOUST)
+# 2. CPI Inflation YoY (CPIAUCSL)
 with col2:
+    s_cpi = fetch_fred_series('CPIAUCSL')
+    if not s_cpi.empty:
+        s_cpi_yoy = s_cpi.pct_change(12) * 100
+        df_cpi = pd.DataFrame({'CPI YoY (%)': s_cpi_yoy}).dropna()
+        latest_cpi = df_cpi['CPI YoY (%)'].iloc[-1]
+        
+        st.metric("CPI Inflation (YoY % Change)", f"{latest_cpi:.2f}%", f"{latest_cpi - 2.0:+.2f}% vs Fed Target", delta_color="inverse")
+        fig_cpi = create_dark_chart(df_cpi, 'CPI YoY (%)', "CPI YoY Inflation Trend", color="#f72585",
+                                    hlines=[{'value': 2.0, 'dash': 'dot', 'color': '#00ff88', 'text': '2% Target'}])
+        st.plotly_chart(fig_cpi, use_container_width=True)
+        
+        st.markdown("""
+        <div class="analysis-box">
+            <div class="analysis-title">📊 Economic Analysis</div>
+            <b>📌 What it means:</b> Annual percentage change in prices paid by urban consumers.<br>
+            <b>📍 Where we are:</b> Moderating steadily toward the 2.0% target.<br>
+            <b>🚦 Assessment:</b> 🟩 <b>Improving</b> — Moderating prices preserve purchasing power.<br>
+            <b>🎯 Target Level:</b> <b>2.00%</b> (Federal Reserve target).
+        </div>
+        """, unsafe_allow_html=True)
+
+# 3. Real GDP Growth Rate YoY (GDPC1)
+with col3:
+    s_gdp = fetch_fred_series('GDPC1')
+    if not s_gdp.empty:
+        s_gdp_yoy = s_gdp.pct_change(4) * 100
+        df_gdp = pd.DataFrame({'GDP Growth YoY (%)': s_gdp_yoy}).dropna()
+        latest_gdp = df_gdp['GDP Growth YoY (%)'].iloc[-1]
+        
+        st.metric("Real GDP Growth (YoY %)", f"{latest_gdp:.2f}%", "Expanding" if latest_gdp > 0 else "Contracting")
+        fig_gdp = create_dark_chart(df_gdp, 'GDP Growth YoY (%)', "Real GDP YoY Growth Trend", color="#4895ef",
+                                    hlines=[{'value': 0.0, 'dash': 'solid', 'color': '#ff0055', 'text': '0% Boundary'}])
+        st.plotly_chart(fig_gdp, use_container_width=True)
+        
+        st.markdown("""
+        <div class="analysis-box">
+            <div class="analysis-title">📊 Economic Analysis</div>
+            <b>📌 What it means:</b> Total inflation-adjusted output of goods and services.<br>
+            <b>📍 Where we are:</b> Expanding solidly (~2.0%–2.8% pace), avoiding recession.<br>
+            <b>🚦 Assessment:</b> 🟩 <b>Good</b> — Sustained output growth across sectors.<br>
+            <b>🎯 Target Level:</b> <b>2.0% – 3.0%</b> (Sustainable long-term GDP pace).
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- ROW 2: HOUSING STARTS | MONTHLY CALENDAR | NEW HOME SALES ---
+col4, col5, col6 = st.columns(3)
+
+# 4. Housing Starts (HOUST)
+with col4:
     s_houst = fetch_fred_series('HOUST')
     if not s_houst.empty:
         df_houst = pd.DataFrame({'Starts (K)': s_houst})
@@ -369,62 +415,8 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
 
-# 3. Industrial Production / PMI Manufacturing (IPMAN)
-with col3:
-    s_pmi = fetch_fred_series('IPMAN')
-    if not s_pmi.empty:
-        df_pmi = pd.DataFrame({'Index': s_pmi})
-        latest_pmi = df_pmi['Index'].iloc[-1]
-        avg_pmi = df_pmi['Index'].mean()
-        
-        st.metric("Industrial Production: Manufacturing", f"{latest_pmi:.1f}", f"{latest_pmi - avg_pmi:+.1f} vs Avg")
-        fig_pmi = create_dark_chart(df_pmi, 'Index', "Manufacturing Output Index", color="#ffaa00", 
-                                    hlines=[{'value': avg_pmi, 'dash': 'dash', 'color': '#888888', 'text': 'Avg'}])
-        st.plotly_chart(fig_pmi, use_container_width=True)
-        
-        st.markdown("""
-        <div class="analysis-box">
-            <div class="analysis-title">📊 Economic Analysis</div>
-            <b>📌 What it means:</b> Physical output from factory and industrial supply chains.<br>
-            <b>📍 Where we are:</b> Stable output (~99.4) amid steady capital expenditure.<br>
-            <b>🚦 Assessment:</b> 🟨 <b>Neutral</b> — Factory activity is holding firm.<br>
-            <b>🎯 Target Level:</b> <b>> 100.0</b> (Clear industrial expansion).
-        </div>
-        """, unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- ROW 2 ---
-col4, col5, col6 = st.columns(3)
-
-# 4. 30-Year Mortgage Rate (MORTGAGE30US)
-with col4:
-    s_mort = fetch_fred_series('MORTGAGE30US')
-    if not s_mort.empty:
-        df_mort = pd.DataFrame({'Rate (%)': s_mort})
-        latest_mort = df_mort['Rate (%)'].iloc[-1]
-        avg_mort = df_mort['Rate (%)'].mean()
-        
-        st.metric("30-Year Fixed Mortgage Rate", f"{latest_mort:.2f}%", f"{latest_mort - avg_mort:+.2f}% vs Avg", delta_color="inverse")
-        fig_mort = create_dark_chart(df_mort, 'Rate (%)', "30Y Mortgage Rate Trend", color="#ff4b4b",
-                                     hlines=[{'value': avg_mort, 'dash': 'dash', 'color': '#ffaa00', 'text': 'Avg'}])
-        st.plotly_chart(fig_mort, use_container_width=True)
-        
-        st.markdown("""
-        <div class="analysis-box">
-            <div class="analysis-title">📊 Economic Analysis</div>
-            <b>📌 What it means:</b> Primary long-term borrowing benchmark for U.S. home buyers.<br>
-            <b>📍 Where we are:</b> Higher relative to 2015–2021 historical baselines.<br>
-            <b>🚦 Assessment:</b> 🟥 <b>Restrictive</b> — Influences housing turnover and volume.<br>
-            <b>🎯 Target Level:</b> <b>4.50% – 5.50%</b> (Balanced borrowing range).
-        </div>
-        """, unsafe_allow_html=True)
-
 # 5. MIDDLE CENTER: INTERACTIVE MONTHLY CALENDAR
 with col5:
-    c_m, c_yr = st.columns([2, 1])
-    
-    # Month & Year Navigation State Controls
     col_p, col_t, col_n = st.columns([1, 2, 1])
     with col_p:
         if st.button("◀ Prev", key="btn_prev"):
@@ -450,59 +442,8 @@ with col5:
 
     st.markdown(render_monthly_calendar(st.session_state.cal_year, st.session_state.cal_month), unsafe_allow_html=True)
 
-# 6. Unemployment Rate (UNRATE)
+# 6. New Home Sales (HSN1F)
 with col6:
-    s_unrate = fetch_fred_series('UNRATE')
-    if not s_unrate.empty:
-        df_unrate = pd.DataFrame({'Unemployment (%)': s_unrate})
-        latest_unrate = df_unrate['Unemployment (%)'].iloc[-1]
-        avg_unrate = df_unrate['Unemployment (%)'].mean()
-        
-        st.metric("Unemployment Rate", f"{latest_unrate:.1f}%", f"{latest_unrate - avg_unrate:+.1f}% vs Avg", delta_color="inverse")
-        fig_unrate = create_dark_chart(df_unrate, 'Unemployment (%)', "Unemployment Trend", color="#4cc9f0",
-                                       hlines=[{'value': avg_unrate, 'dash': 'dash', 'color': '#f72585', 'text': 'Avg'}])
-        st.plotly_chart(fig_unrate, use_container_width=True)
-        
-        st.markdown("""
-        <div class="analysis-box">
-            <div class="analysis-title">📊 Economic Analysis</div>
-            <b>📌 What it means:</b> Share of active workforce seeking active employment.<br>
-            <b>📍 Where we are:</b> Healthy full employment baseline (~4.0%–4.3%).<br>
-            <b>🚦 Assessment:</b> 🟩 <b>Good</b> — Sustained wage income supports consumer spending.<br>
-            <b>🎯 Target Level:</b> <b>3.5% – 4.5%</b> (Full employment range).
-        </div>
-        """, unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- ROW 3 ---
-col7, col8, col9 = st.columns(3)
-
-# 7. CPI Inflation YoY (CPIAUCSL)
-with col7:
-    s_cpi = fetch_fred_series('CPIAUCSL')
-    if not s_cpi.empty:
-        s_cpi_yoy = s_cpi.pct_change(12) * 100
-        df_cpi = pd.DataFrame({'CPI YoY (%)': s_cpi_yoy}).dropna()
-        latest_cpi = df_cpi['CPI YoY (%)'].iloc[-1]
-        
-        st.metric("CPI Inflation (YoY % Change)", f"{latest_cpi:.2f}%", f"{latest_cpi - 2.0:+.2f}% vs Fed Target", delta_color="inverse")
-        fig_cpi = create_dark_chart(df_cpi, 'CPI YoY (%)', "CPI YoY Inflation Trend", color="#f72585",
-                                    hlines=[{'value': 2.0, 'dash': 'dot', 'color': '#00ff88', 'text': '2% Target'}])
-        st.plotly_chart(fig_cpi, use_container_width=True)
-        
-        st.markdown("""
-        <div class="analysis-box">
-            <div class="analysis-title">📊 Economic Analysis</div>
-            <b>📌 What it means:</b> Annual percentage change in prices paid by urban consumers.<br>
-            <b>📍 Where we are:</b> Moderating steadily toward the 2.0% target.<br>
-            <b>🚦 Assessment:</b> 🟩 <b>Improving</b> — Moderating prices preserve purchasing power.<br>
-            <b>🎯 Target Level:</b> <b>2.00%</b> (Federal Reserve target).
-        </div>
-        """, unsafe_allow_html=True)
-
-# 8. New Home Sales (HSN1F)
-with col8:
     s_sales = fetch_fred_series('HSN1F')
     if not s_sales.empty:
         df_sales = pd.DataFrame({'Sales (K)': s_sales})
@@ -524,25 +465,76 @@ with col8:
         </div>
         """, unsafe_allow_html=True)
 
-# 9. Real GDP Growth Rate YoY (GDPC1)
-with col9:
-    s_gdp = fetch_fred_series('GDPC1')
-    if not s_gdp.empty:
-        s_gdp_yoy = s_gdp.pct_change(4) * 100
-        df_gdp = pd.DataFrame({'GDP Growth YoY (%)': s_gdp_yoy}).dropna()
-        latest_gdp = df_gdp['GDP Growth YoY (%)'].iloc[-1]
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- ROW 3: UNEMPLOYMENT RATE | MANUFACTURING OUTPUT (PMI) | 30Y MORTGAGE RATE ---
+col7, col8, col9 = st.columns(3)
+
+# 7. Unemployment Rate (UNRATE)
+with col7:
+    s_unrate = fetch_fred_series('UNRATE')
+    if not s_unrate.empty:
+        df_unrate = pd.DataFrame({'Unemployment (%)': s_unrate})
+        latest_unrate = df_unrate['Unemployment (%)'].iloc[-1]
+        avg_unrate = df_unrate['Unemployment (%)'].mean()
         
-        st.metric("Real GDP Growth (YoY %)", f"{latest_gdp:.2f}%", "Expanding" if latest_gdp > 0 else "Contracting")
-        fig_gdp = create_dark_chart(df_gdp, 'GDP Growth YoY (%)', "Real GDP YoY Growth Trend", color="#4895ef",
-                                    hlines=[{'value': 0.0, 'dash': 'solid', 'color': '#ff0055', 'text': '0% Boundary'}])
-        st.plotly_chart(fig_gdp, use_container_width=True)
+        st.metric("Unemployment Rate", f"{latest_unrate:.1f}%", f"{latest_unrate - avg_unrate:+.1f}% vs Avg", delta_color="inverse")
+        fig_unrate = create_dark_chart(df_unrate, 'Unemployment (%)', "Unemployment Trend", color="#4cc9f0",
+                                       hlines=[{'value': avg_unrate, 'dash': 'dash', 'color': '#f72585', 'text': 'Avg'}])
+        st.plotly_chart(fig_unrate, use_container_width=True)
         
         st.markdown("""
         <div class="analysis-box">
             <div class="analysis-title">📊 Economic Analysis</div>
-            <b>📌 What it means:</b> Total inflation-adjusted output of goods and services.<br>
-            <b>📍 Where we are:</b> Expanding solidly (~2.0%–2.8% pace), avoiding recession.<br>
-            <b>🚦 Assessment:</b> 🟩 <b>Good</b> — Sustained output growth across sectors.<br>
-            <b>🎯 Target Level:</b> <b>2.0% – 3.0%</b> (Sustainable long-term GDP pace).
+            <b>📌 What it means:</b> Share of active workforce seeking active employment.<br>
+            <b>📍 Where we are:</b> Healthy full employment baseline (~4.0%–4.3%).<br>
+            <b>🚦 Assessment:</b> 🟩 <b>Good</b> — Sustained wage income supports consumer spending.<br>
+            <b>🎯 Target Level:</b> <b>3.5% – 4.5%</b> (Full employment range).
+        </div>
+        """, unsafe_allow_html=True)
+
+# 8. Industrial Production / PMI Manufacturing (IPMAN)
+with col8:
+    s_pmi = fetch_fred_series('IPMAN')
+    if not s_pmi.empty:
+        df_pmi = pd.DataFrame({'Index': s_pmi})
+        latest_pmi = df_pmi['Index'].iloc[-1]
+        avg_pmi = df_pmi['Index'].mean()
+        
+        st.metric("Industrial Production: Manufacturing", f"{latest_pmi:.1f}", f"{latest_pmi - avg_pmi:+.1f} vs Avg")
+        fig_pmi = create_dark_chart(df_pmi, 'Index', "Manufacturing Output Index", color="#ffaa00", 
+                                    hlines=[{'value': avg_pmi, 'dash': 'dash', 'color': '#888888', 'text': 'Avg'}])
+        st.plotly_chart(fig_pmi, use_container_width=True)
+        
+        st.markdown("""
+        <div class="analysis-box">
+            <div class="analysis-title">📊 Economic Analysis</div>
+            <b>📌 What it means:</b> Physical output from factory and industrial supply chains.<br>
+            <b>📍 Where we are:</b> Stable output (~99.4) amid steady capital expenditure.<br>
+            <b>🚦 Assessment:</b> 🟨 <b>Neutral</b> — Factory activity is holding firm.<br>
+            <b>🎯 Target Level:</b> <b>> 100.0</b> (Clear industrial expansion).
+        </div>
+        """, unsafe_allow_html=True)
+
+# 9. 30-Year Mortgage Rate (MORTGAGE30US)
+with col9:
+    s_mort = fetch_fred_series('MORTGAGE30US')
+    if not s_mort.empty:
+        df_mort = pd.DataFrame({'Rate (%)': s_mort})
+        latest_mort = df_mort['Rate (%)'].iloc[-1]
+        avg_mort = df_mort['Rate (%)'].mean()
+        
+        st.metric("30-Year Fixed Mortgage Rate", f"{latest_mort:.2f}%", f"{latest_mort - avg_mort:+.2f}% vs Avg", delta_color="inverse")
+        fig_mort = create_dark_chart(df_mort, 'Rate (%)', "30Y Mortgage Rate Trend", color="#ff4b4b",
+                                     hlines=[{'value': avg_mort, 'dash': 'dash', 'color': '#ffaa00', 'text': 'Avg'}])
+        st.plotly_chart(fig_mort, use_container_width=True)
+        
+        st.markdown("""
+        <div class="analysis-box">
+            <div class="analysis-title">📊 Economic Analysis</div>
+            <b>📌 What it means:</b> Primary long-term borrowing benchmark for U.S. home buyers.<br>
+            <b>📍 Where we are:</b> Higher relative to 2015–2021 historical baselines.<br>
+            <b>🚦 Assessment:</b> 🟥 <b>Restrictive</b> — Influences housing turnover and volume.<br>
+            <b>🎯 Target Level:</b> <b>4.50% – 5.50%</b> (Balanced borrowing range).
         </div>
         """, unsafe_allow_html=True)
