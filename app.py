@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from fredapi import Fred
+import yfinance as yf
 import datetime
 import calendar
 
@@ -16,10 +17,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom High-Contrast CSS Injection
 st.markdown("""
 <style>
-    /* Hide top header bar & reduce top margin */
     header {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     .block-container {
@@ -28,13 +27,11 @@ st.markdown("""
         max-width: 98% !important;
     }
     
-    /* Overall dark theme setup */
     .stApp {
         background-color: #0b0f19 !important;
         color: #f8fafc !important;
     }
     
-    /* Make metric labels & numbers bright & readable */
     [data-testid="stMetricLabel"] {
         color: #f1f5f9 !important;
         font-weight: 700 !important;
@@ -46,7 +43,6 @@ st.markdown("""
         font-weight: 800 !important;
     }
 
-    /* Style for the analysis callout box */
     .analysis-box {
         background-color: #161e2e;
         border: 1px solid #2a364f;
@@ -64,7 +60,6 @@ st.markdown("""
         margin-bottom: 4px;
     }
     
-    /* Clean container tile border */
     div[data-testid="column"] {
         background-color: #111827;
         border: 1px solid #1f2937;
@@ -72,7 +67,6 @@ st.markdown("""
         border-radius: 10px;
     }
 
-    /* Industry Return Ticker Tape Styling */
     .ticker-wrap {
         width: 100%;
         overflow: hidden;
@@ -87,7 +81,7 @@ st.markdown("""
         display: inline-block;
         white-space: nowrap;
         padding-left: 100%;
-        animation: ticker 32s linear infinite;
+        animation: ticker 35s linear infinite;
     }
     @keyframes ticker {
         0% { transform: translate3d(0, 0, 0); }
@@ -102,7 +96,6 @@ st.markdown("""
     .pos { color: #34d399; }
     .neg { color: #f87171; }
 
-    /* Calendar Table Styling */
     .cal-table {
         width: 100%;
         border-collapse: collapse;
@@ -134,7 +127,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. FRED API KEY SETUP
+# 2. API KEY SETUP
 # ==============================================================================
 API_KEY = "19d76f858cd1c2d6c01a6f10a2825a24"
 
@@ -155,6 +148,45 @@ def fetch_fred_series(series_id: str, start_date: str = "2018-01-01") -> pd.Seri
     except Exception as e:
         st.error(f"Error fetching {series_id}: {e}")
         return pd.Series(dtype=float)
+
+@st.cache_data(ttl=14400) # Cache live sector returns for 4 hours
+def get_live_sector_returns():
+    """Fetches real-time YTD performance for S&P 500 Sector ETFs via Yahoo Finance."""
+    sectors = {
+        "S&P 500 (SPY)": "SPY",
+        "Tech (XLK)": "XLK",
+        "Comm Services (XLC)": "XLC",
+        "Utilities (XLU)": "XLU",
+        "Financials (XLF)": "XLF",
+        "Discretionary (XLY)": "XLY",
+        "Industrials (XLI)": "XLI",
+        "Healthcare (XLV)": "XLV",
+        "Staples (XLP)": "XLP",
+        "Real Estate (XLRE)": "XLRE",
+        "Energy (XLE)": "XLE",
+    }
+    
+    results = []
+    try:
+        tickers = list(sectors.values())
+        start_of_year = f"{datetime.datetime.now().year}-01-01"
+        data = yf.download(tickers, start=start_of_year, progress=False)['Close']
+        
+        for name, ticker in sectors.items():
+            if ticker in data.columns:
+                series = data[ticker].dropna()
+                if len(series) >= 2:
+                    start_price = series.iloc[0]
+                    curr_price = series.iloc[-1]
+                    ytd_ret = ((curr_price - start_price) / start_price) * 100
+                    results.append((name, f"{ytd_ret:+.1f}% YTD", ytd_ret >= 0))
+    except Exception:
+        pass
+    
+    if not results:
+        results = [("Market Data Unavailable", "0.0%", True)]
+        
+    return results
 
 def create_dark_chart(df: pd.DataFrame, y_col: str, title: str, color: str = "#00f2fe", hlines: list = None) -> go.Figure:
     fig = px.line(df, x=df.index, y=y_col)
@@ -186,21 +218,7 @@ def create_dark_chart(df: pd.DataFrame, y_col: str, title: str, color: str = "#0
     return fig
 
 def render_ticker_tape():
-    """Renders an animated industry & sector YTD return ticker tape at the top."""
-    sectors = [
-        ("S&P 500 Broad Index", "+18.4%", True),
-        ("Technology (XLK)", "+24.1%", True),
-        ("Communication Services (XLC)", "+21.5%", True),
-        ("Utilities (XLU)", "+19.2%", True),
-        ("Financials (XLF)", "+15.3%", True),
-        ("Consumer Discretionary (XLY)", "+14.9%", True),
-        ("Industrials (XLI)", "+12.6%", True),
-        ("Healthcare (XLV)", "+7.8%", True),
-        ("Consumer Staples (XLP)", "+4.8%", True),
-        ("Real Estate (XLRE)", "+3.4%", True),
-        ("Energy (XLE)", "-2.1%", False),
-    ]
-    
+    sectors = get_live_sector_returns()
     items_html = ""
     for name, ret, is_pos in sectors:
         color_cls = "pos" if is_pos else "neg"
@@ -216,15 +234,13 @@ def render_ticker_tape():
     return html
 
 def render_monthly_calendar():
-    """Generates an HTML monthly calendar highlighting today and key economic releases."""
     now = datetime.datetime.now()
     year, month, today_day = now.year, now.month, now.day
     month_name = calendar.month_name[month]
     
-    cal = calendar.Calendar(firstweekday=6) # Sunday start
+    cal = calendar.Calendar(firstweekday=6)
     month_days = cal.monthdayscalendar(year, month)
     
-    # Identify recurring monthly key release dates
     first_friday = [week[5] for week in month_days if week[5] != 0][0]
     cpi_day = 12
     fomc_day = 18
@@ -273,7 +289,7 @@ def render_monthly_calendar():
 st.title("🌐 Macroeconomic & Financial Dashboard")
 st.caption("Real-time FRED economic indicators, housing metrics, sector returns, and monetary policy tracking.")
 
-# Render Industry Returns YTD Ticker Tape at the Top
+# Render Live Industry Returns Ticker Tape
 st.markdown(render_ticker_tape(), unsafe_allow_html=True)
 
 # ==============================================================================
