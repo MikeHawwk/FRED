@@ -14,12 +14,12 @@ st.set_page_config(
     page_title="Macroeconomic & Financial Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"  # Opened sidebar by default
 )
 
 st.markdown("""
 <style>
-    /* Hide top header bar & reduce top margin */
+    /* Hide top header bar & reduce top whitespace */
     header {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     .block-container {
@@ -75,8 +75,8 @@ st.markdown("""
         background-color: #111827;
         border: 1px solid #1f2937;
         border-radius: 8px;
-        padding: 8px 0;
-        margin-bottom: 18px;
+        padding: 6px 0;
+        margin-bottom: 6px;
         white-space: nowrap;
     }
     .ticker-move {
@@ -92,7 +92,7 @@ st.markdown("""
     .ticker-item {
         display: inline-block;
         padding: 0 18px;
-        font-size: 0.88rem;
+        font-size: 0.85rem;
         font-weight: 600;
     }
     .pos { color: #34d399; }
@@ -159,6 +159,7 @@ def fetch_fred_series(series_id: str, start_date: str = "2018-01-01") -> pd.Seri
 
 @st.cache_data(ttl=3600)
 def get_live_sector_returns():
+    """Fetches real-time YTD performance for S&P 500 Sector ETFs via Yahoo Finance."""
     sectors = {
         "S&P 500 (SPY)": "SPY",
         "Tech (XLK)": "XLK",
@@ -172,7 +173,6 @@ def get_live_sector_returns():
         "Real Estate (XLRE)": "XLRE",
         "Energy (XLE)": "XLE",
     }
-    
     results = []
     try:
         curr_year = datetime.datetime.now().year
@@ -192,7 +192,46 @@ def get_live_sector_returns():
     
     if not results:
         results = [("Market Data Syncing...", "0.0%", True)]
+    return results
+
+@st.cache_data(ttl=900)
+def get_live_daily_returns():
+    """Fetches Today's 1-Day performance for major market indices and sector ETFs."""
+    items = {
+        "S&P 500": "^GSPC",
+        "Nasdaq": "^IXIC",
+        "Dow Jones": "^DJI",
+        "Russell 2000": "^RUT",
+        "VIX Volatility": "^VIX",
+        "Tech (XLK)": "XLK",
+        "Comm Services (XLC)": "XLC",
+        "Financials (XLF)": "XLF",
+        "Discretionary (XLY)": "XLY",
+        "Industrials (XLI)": "XLI",
+        "Healthcare (XLV)": "XLV",
+        "Staples (XLP)": "XLP",
+        "Energy (XLE)": "XLE",
+        "Utilities (XLU)": "XLU",
+        "Real Estate (XLRE)": "XLRE"
+    }
+    results = []
+    try:
+        data = yf.download(list(items.values()), period="5d", progress=False)
+        close_data = data['Close'] if 'Close' in data.columns else data
         
+        for name, ticker in items.items():
+            if ticker in close_data.columns:
+                series = close_data[ticker].dropna()
+                if len(series) >= 2:
+                    prev_close = series.iloc[-2]
+                    curr_close = series.iloc[-1]
+                    daily_change = ((curr_close - prev_close) / prev_close) * 100
+                    results.append((name, f"{daily_change:+.2f}% Today", daily_change >= 0))
+    except Exception:
+        pass
+        
+    if not results:
+        results = [("Market Data Syncing...", "0.0%", True)]
     return results
 
 def create_dark_chart(df: pd.DataFrame, y_col: str, title: str, color: str = "#00f2fe", hlines: list = None) -> go.Figure:
@@ -224,14 +263,32 @@ def create_dark_chart(df: pd.DataFrame, y_col: str, title: str, color: str = "#0
             
     return fig
 
-def render_ticker_tape():
-    sectors = get_live_sector_returns()
-    items_html = ""
-    for name, ret, is_pos in sectors:
+def render_dual_ticker_tapes():
+    """Renders two stacked ticker tapes: YTD Sector Returns and Today's Market Returns."""
+    # Tape 1: YTD Returns
+    ytd_sectors = get_live_sector_returns()
+    ytd_html = ""
+    for name, ret, is_pos in ytd_sectors:
         color_cls = "pos" if is_pos else "neg"
-        items_html += f'<div class="ticker-item"><span>{name}:</span> <span class="{color_cls}">{ret}</span></div> • '
+        ytd_html += f'<div class="ticker-item"><span>{name}:</span> <span class="{color_cls}">{ret}</span></div> • '
     
-    return f'<div class="ticker-wrap"><div class="ticker-move">{items_html} {items_html}</div></div>'
+    # Tape 2: Today's Daily Returns
+    daily_items = get_live_daily_returns()
+    daily_html = ""
+    for name, ret, is_pos in daily_items:
+        color_cls = "pos" if is_pos else "neg"
+        daily_html += f'<div class="ticker-item"><span>{name}:</span> <span class="{color_cls}">{ret}</span></div> • '
+    
+    return f"""
+    <div style="margin-bottom: 6px;">
+        <div style="font-size: 0.78rem; font-weight: bold; color: #38bdf8; margin-bottom: 2px;">📈 YTD SECTOR RETURNS</div>
+        <div class="ticker-wrap"><div class="ticker-move">{ytd_html} {ytd_html}</div></div>
+    </div>
+    <div style="margin-bottom: 18px;">
+        <div style="font-size: 0.78rem; font-weight: bold; color: #34d399; margin-bottom: 2px;">⚡ TODAY'S MARKET & SECTOR RETURNS (1-DAY)</div>
+        <div class="ticker-wrap"><div class="ticker-move">{daily_html} {daily_html}</div></div>
+    </div>
+    """
 
 def render_monthly_calendar(year, month):
     today = datetime.datetime.now()
@@ -480,7 +537,6 @@ TILE_MAP = {
     "Household Debt Service %": render_debt_service,
 }
 
-# Default requested order
 DEFAULT_ORDER = [
     "Fed Funds Rate", "CPI Inflation YoY", "Real GDP Growth Rate",
     "Housing Starts", "Interactive Calendar", "New Home Sales",
@@ -488,25 +544,41 @@ DEFAULT_ORDER = [
     "Federal Debt ($ Total)", "Federal Debt (% of GDP)", "Household Debt Service %"
 ]
 
-# ==============================================================================
-# 5. SIDEBAR LAYOUT CONFIGURATOR
-# ==============================================================================
-st.sidebar.title("⚙️ Position Customizer")
-st.sidebar.caption("Assign any indicator to any slot on your dashboard layout:")
-
-user_layout = []
-for i in range(12):
-    default_item = DEFAULT_ORDER[i]
-    chosen = st.sidebar.selectbox(f"Slot {i+1} Position", list(TILE_MAP.keys()), index=list(TILE_MAP.keys()).index(default_item), key=f"slot_{i}")
-    user_layout.append(chosen)
-
-# Main Title Header & Ticker Tape
+# Header Title & Ticker Tapes
 st.title("🌐 Macroeconomic & Financial Dashboard")
 st.caption("Real-time FRED economic indicators, debt metrics, sector returns, and policy tracking.")
-st.markdown(render_ticker_tape(), unsafe_allow_html=True)
+
+# Render Dual Ticker Tapes (YTD Returns + Today's Returns)
+st.markdown(render_dual_ticker_tapes(), unsafe_allow_html=True)
 
 # ==============================================================================
-# 6. RENDER 4x3 GRID BASED ON CUSTOM POSITIONS
+# 5. INLINE & SIDEBAR LAYOUT CONFIGURATOR
+# ==============================================================================
+with st.expander("🔀 Reorder Dashboard Layout (Change Slot Positions)", expanded=False):
+    st.write("Select which indicator or component appears in each position on your 4x3 grid:")
+    cfg_cols = st.columns(3)
+    user_layout = []
+    
+    for i in range(12):
+        col_target = cfg_cols[i % 3]
+        default_item = DEFAULT_ORDER[i]
+        with col_target:
+            chosen = st.selectbox(
+                f"Position {i+1}", 
+                list(TILE_MAP.keys()), 
+                index=list(TILE_MAP.keys()).index(default_item), 
+                key=f"slot_main_{i}"
+            )
+            user_layout.append(chosen)
+
+# Sidebar mirror configuration
+st.sidebar.title("⚙️ Position Customizer")
+st.sidebar.caption("You can also reorder slots here in the sidebar:")
+for i in range(12):
+    st.sidebar.caption(f"Slot {i+1}: {user_layout[i]}")
+
+# ==============================================================================
+# 6. RENDER 4x3 GRID BASED ON SELECTED POSITIONS
 # ==============================================================================
 for row_idx in range(4):
     cols = st.columns(3)
