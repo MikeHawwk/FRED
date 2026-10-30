@@ -14,12 +14,12 @@ st.set_page_config(
     page_title="Macroeconomic & Financial Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"  # Opened sidebar by default
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
 <style>
-    /* Hide top header bar & reduce top whitespace */
+    /* Hide top header bar & reduce whitespace */
     header {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     .block-container {
@@ -42,6 +42,60 @@ st.markdown("""
         color: #ffffff !important;
         font-size: 1.9rem !important;
         font-weight: 800 !important;
+    }
+
+    /* Executive Summary Callout Styling */
+    .exec-summary-card {
+        background: linear-gradient(135deg, #161e2e 0%, #0f172a 100%);
+        border: 1px solid #38bdf8;
+        border-left: 6px solid #38bdf8;
+        border-radius: 10px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        color: #f8fafc;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    .exec-summary-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #1e293b;
+        padding-bottom: 8px;
+        margin-bottom: 12px;
+    }
+    .exec-summary-title {
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: #38bdf8;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .exec-badge {
+        background-color: #0284c7;
+        color: #ffffff;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 20px;
+        text-transform: uppercase;
+    }
+    .exec-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+        font-size: 0.88rem;
+        line-height: 1.5;
+    }
+    .exec-item {
+        background-color: rgba(30, 41, 59, 0.5);
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 10px;
+    }
+    .exec-item-title {
+        font-weight: 700;
+        color: #f1f5f9;
+        margin-bottom: 4px;
     }
 
     .analysis-box {
@@ -265,14 +319,12 @@ def create_dark_chart(df: pd.DataFrame, y_col: str, title: str, color: str = "#0
 
 def render_dual_ticker_tapes():
     """Renders two stacked ticker tapes: YTD Sector Returns and Today's Market Returns."""
-    # Tape 1: YTD Returns
     ytd_sectors = get_live_sector_returns()
     ytd_html = ""
     for name, ret, is_pos in ytd_sectors:
         color_cls = "pos" if is_pos else "neg"
         ytd_html += f'<div class="ticker-item"><span>{name}:</span> <span class="{color_cls}">{ret}</span></div> • '
     
-    # Tape 2: Today's Daily Returns
     daily_items = get_live_daily_returns()
     daily_html = ""
     for name, ret, is_pos in daily_items:
@@ -287,6 +339,31 @@ def render_dual_ticker_tapes():
     <div style="margin-bottom: 18px;">
         <div style="font-size: 0.78rem; font-weight: bold; color: #34d399; margin-bottom: 2px;">⚡ TODAY'S MARKET & SECTOR RETURNS (1-DAY)</div>
         <div class="ticker-wrap"><div class="ticker-move">{daily_html} {daily_html}</div></div>
+    </div>
+    """
+
+def render_executive_summary():
+    """Renders an executive summary card explaining where we are in the economic cycle."""
+    return """
+    <div class="exec-summary-card">
+        <div class="exec-summary-header">
+            <span class="exec-summary-title">📋 Executive Macro Summary: Economic Cycle Status</span>
+            <span class="exec-badge">Late-Cycle / Policy Transition</span>
+        </div>
+        <div class="exec-grid">
+            <div class="exec-item">
+                <div class="exec-item-title">🟩 Growth & Labor Resilience</div>
+                Real GDP growth remains solid (~2.0%–2.8% SAAR) while unemployment holds at full-employment levels (~4.0%–4.3%). The labor market continues to underpin consumer spending without triggering recessionary contractions.
+            </div>
+            <div class="exec-item">
+                <div class="exec-item-title">🟨 Inflation & Policy Pivot</div>
+                CPI inflation is moderating steadily toward the Federal Reserve's 2.0% target. This allows the Fed to recalibrate the Federal Funds Rate from restrictive monetary policy down toward a long-term neutral range (2.50%–3.25%).
+            </div>
+            <div class="exec-item">
+                <div class="exec-item-title">🟥 Housing & Debt Pressures</div>
+                Elevated 30-year mortgage rates continue to pressure home purchase turnover, though homebuilders maintain sales via rate buy-downs. Total federal debt exceeds 120% of GDP, though household debt service ratios (~9.8%) remain healthy.
+            </div>
+        </div>
     </div>
     """
 
@@ -550,6 +627,9 @@ st.caption("Real-time FRED economic indicators, debt metrics, sector returns, an
 
 # Render Dual Ticker Tapes (YTD Returns + Today's Returns)
 st.markdown(render_dual_ticker_tapes(), unsafe_allow_html=True)
+
+# Render Executive Macro Summary Card
+st.markdown(render_executive_summary(), unsafe_allow_html=True)
 
 # ==============================================================================
 # 5. INLINE & SIDEBAR LAYOUT CONFIGURATOR
